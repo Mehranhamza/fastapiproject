@@ -7,7 +7,7 @@ app = FastAPI()
 # Load CSV
 def load_csv():
     try:
-        data = pd.read_csv("data/SehiBukhariHadees.csv")
+        data = pd.read_csv("data/SehiBukhariHadees.csv", encoding="ISO-8859-1")
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error loading CSV: {str(e)}")
