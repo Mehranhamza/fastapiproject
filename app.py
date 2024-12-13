@@ -1,38 +1,79 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import pandas as pd
-from typing import List
-
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import os
+ 
 app = FastAPI()
-
-# Load CSV
-def load_csv():
-    try:
-        data = pd.read_csv("data/Book1.csv")
-        return data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error loading CSV: {str(e)}")
-
+ 
+# CORS Middleware (if required)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust as per your requirements
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+ 
+# Dataset Path
+dataset_path = os.path.join(os.getcwd(), 'data/Book1.csv')
+ 
+# Data Loading and Preprocessing
+data = pd.read_csv(dataset_path)
+ 
+def preprocess_text(text):
+    if pd.isnull(text):
+        return ""
+    text = re.sub(r'[^a-zA-Z\s]', '', text)
+    text = text.lower()
+    return text
+ 
+data['clean_text'] = data['text_en'].apply(preprocess_text)
+data = data.dropna(subset=['clean_text']).reset_index(drop=True)
+ 
+# Feature Extraction
+tfidf_vectorizer = TfidfVectorizer()
+tfidf_matrix = tfidf_vectorizer.fit_transform(data['clean_text'])
+ 
+# Request Model
+class Query(BaseModel):
+    query: str
+ 
+# Utility Function
+def get_similar_hadees(query, tfidf_matrix, tfidf_vectorizer, top_n=50):
+    query_vector = tfidf_vectorizer.transform([preprocess_text(query)])
+    cosine_similarities = cosine_similarity(query_vector, tfidf_matrix).flatten()
+    similar_hadees_indices = cosine_similarities.argsort()[:-top_n-1:-1]
+    similar_hadees_scores = cosine_similarities[similar_hadees_indices]
+    similar_hadees = data.iloc[similar_hadees_indices][['hadith_no', 'text_en', 'source']]
+    return similar_hadees, similar_hadees_scores
+ 
 # Routes
-@app.get("/")
-async def root():
-    return {"message": "Welcome to the FastAPI CSV Example!"}
-
-@app.get("/users")
-async def get_users():
+@app.post("/get_similar_hadees")
+async def simple_post(query: Query):
     try:
-        data = load_csv()
-        users = data.to_dict(orient="records")
-        return {"users": users}
+        if not query.query:
+            raise HTTPException(status_code=400, detail="Query is required.")
+       
+        similar_hadees, similar_hadees_scores = get_similar_hadees(query.query, tfidf_matrix, tfidf_vectorizer)
+        result = []
+        for _, row in similar_hadees.iterrows():
+            hadees_info = {
+                "hadith_no": row['hadith_no'],
+                "source": row['source'],
+                "text_en": row['text_en'],
+            }
+            result.append(hadees_info)
+ 
+        return {"similar_hadees": result}
+ 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/users/{user_id}")
-async def get_user(user_id: int):
-    try:
-        data = load_csv()
-        user = data[data["id"] == user_id]
-        if user.empty:
-            raise HTTPException(status_code=404, detail="User not found")
-        return user.to_dict(orient="records")[0]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+ 
+@app.get("/getresult")
+async def get_result():
+    return {"similar_hadees": "Good"}
